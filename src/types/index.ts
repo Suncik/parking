@@ -19,17 +19,28 @@ export interface ParkingZone {
   name: string; // "Amir Temur xiyoboni"
   district: string;
   address: string;
-  distance: string; // "1.2 km"
+  distance: string; // "1.2 km" (foydalanuvchi joylashuvidan hisoblanadi)
   distanceMeters: number; // 1200
   hourlyRate: number; // in UZS (so'm), e.g. 5000
   totalSpots: number; // 50
   occupiedSpots: number; // 36 -> 14 free
   status: ParkingStatus;
   image: string;
-  coordinates: { x: number; y: number }; // Percentage for interactive map canvas
+  lat: number; // haqiqiy geografik kenglik
+  lng: number; // haqiqiy geografik uzunlik
+  coordinates: { x: number; y: number }; // Percentage for legacy schematic map canvas
   features: string[];
   operatingHours: string;
   spots: ParkingSpot[];
+}
+
+export type LocationSource = 'loading' | 'gps' | 'manual' | 'default';
+
+export interface UserLocation {
+  lat: number;
+  lng: number;
+  source: LocationSource;
+  label: string; // "Chilonzor tumani yaqinida"
 }
 
 export interface ActiveSession {

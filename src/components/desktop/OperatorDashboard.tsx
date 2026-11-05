@@ -1,3 +1,6 @@
+import { OwnerSubscriptionCard } from '../subscription/OwnerSubscriptionCard';
+import { OwnerParkingsCard } from './OwnerParkingsCard';
+import { COMMISSION_PERCENT, splitPayment, formatSom } from '../../utils/commission';
 import React, { useState } from 'react';
 import { UzbekPlate } from '../app/UzbekPlate';
 import {
@@ -326,9 +329,17 @@ export const OperatorDashboard: React.FC<OperatorDashboardProps> = ({
                 <span className="text-xs text-slate-500 font-medium block mt-1">
                   +14% o'tgan kunga nisbatan
                 </span>
+                <span className="text-[11px] text-slate-500 font-medium block mt-1">
+                  Komissiya ({COMMISSION_PERCENT}%): −{formatSom(splitPayment(1_250_000).commission)} · Sizga: {formatSom(splitPayment(1_250_000).ownerPayout)}
+                </span>
               </div>
             </div>
           </section>
+
+          {/* Business tarifi (parking egalari uchun obuna) */}
+          <OwnerParkingsCard />
+
+          <OwnerSubscriptionCard />
 
           {/* Operational Area: 2 Columns Split */}
           <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

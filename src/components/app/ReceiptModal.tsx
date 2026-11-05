@@ -1,6 +1,7 @@
 import React from 'react';
 import { ActiveSession } from '../../types';
 import { UzbekPlate } from './UzbekPlate';
+import { COMMISSION_PERCENT, splitPayment, formatSom } from '../../utils/commission';
 import { X, CheckCircle, Download, Printer, ShieldCheck } from 'lucide-react';
 
 interface ReceiptModalProps {
@@ -102,6 +103,16 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ session, onClose }) 
               <span className="font-semibold text-slate-800">
                 {session.durationMinutes} daqiqa
               </span>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-slate-500">Platforma komissiyasi ({COMMISSION_PERCENT}%):</span>
+              <span className="font-mono text-slate-800">{formatSom(splitPayment(session.totalPaid).commission)}</span>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-slate-500">Parking egasiga:</span>
+              <span className="font-mono text-slate-800">{formatSom(splitPayment(session.totalPaid).ownerPayout)}</span>
             </div>
 
             <div className="flex items-center justify-between pt-2">

@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { COMMISSION_RATE, COMMISSION_PERCENT, splitPayment, formatSom } from '../../utils/commission';
+import React, { useState, useEffect, useRef } from 'react';
+import { addBooking } from '../../utils/bookingsStore';
 import { UzbekPlate } from '../app/UzbekPlate';
 import { SavedCard } from '../../types';
 import { formatCardNumber, formatExpiry, detectCardType } from '../../data/savedCards';
@@ -33,6 +35,9 @@ export const ReservationScreen: React.FC<ReservationScreenProps> = ({
   onAddCard,
   onBackToMap,
 }) => {
+  // Platforma komissiyasi (haydovchi narxi o'zgarmaydi, komissiya narx ichida)
+  const commissionRate = COMMISSION_RATE;
+  const commissionPercent = COMMISSION_PERCENT;
   // Step in the flow:
   // 1: Slot & Vehicle Selection
   // 2: Payment Method Selection ("To'lov usuli")
@@ -99,6 +104,20 @@ export const ReservationScreen: React.FC<ReservationScreenProps> = ({
   const priceSummaryText = `Narx: ${totalPrice.toLocaleString('uz-UZ')} so'm (${durationHours} soat)`;
 
   const selectedCard = savedCards.find((c) => c.id === selectedCardId);
+
+  // To'lov muvaffaqiyatli yakunlanganda rezervatsiyani saqlaymiz (admin paneldagi platforma foydasi uchun)
+  const bookingRecordedRef = useRef(false);
+  useEffect(() => {
+    if (currentStep === 4) {
+      if (!bookingRecordedRef.current) {
+        bookingRecordedRef.current = true;
+        addBooking(selectedParking, totalPrice);
+      }
+    } else {
+      bookingRecordedRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep]);
 
   // Handle proceed to payment step
   const handleProceedToPayment = () => {
@@ -247,6 +266,10 @@ export const ReservationScreen: React.FC<ReservationScreenProps> = ({
           <span>Tarif (5 000 × {durationHours} soat):</span>
           <span className="font-mono text-slate-800">10 000 so'm</span>
         </div>
+        <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+          <span>Shundan platforma komissiyasi ({commissionPercent}%):</span>
+          <span className="font-mono text-slate-800">{formatSom(splitPayment(totalPrice, commissionRate).commission)}</span>
+        </div>
         <div className="mt-1 pt-1.5 border-t border-slate-200/60 flex items-center justify-between">
           <span className="text-xs font-bold text-slate-700">Umumiy summa:</span>
           {/* Exact Prompt: "Narx: 10 000 so'm (2 soat)" */}
@@ -300,7 +323,10 @@ export const ReservationScreen: React.FC<ReservationScreenProps> = ({
         </div>
         <div className="text-right">
           <span className="text-slate-400 block text-[10px] font-sans">To'lov miqdori:</span>
-          <span className="font-bold text-[#2563EB]">10 000 so'm</span>
+          <span className="font-bold text-[#2563EB]">{formatSom(totalPrice)}</span>
+          <span className="text-slate-400 block text-[10px] font-sans">
+            shundan komissiya ({commissionPercent}%): {formatSom(splitPayment(totalPrice, commissionRate).commission)}
+          </span>
         </div>
       </div>
 
@@ -691,8 +717,20 @@ export const ReservationScreen: React.FC<ReservationScreenProps> = ({
       <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/60 flex items-center justify-between text-xs font-mono">
         <span className="text-slate-500 font-sans">To'lov miqdori:</span>
         <span className="font-bold text-[#2563EB]">
-          10 000 so'm (Humo •••• {selectedCard?.last4 || '4421'})
+          {formatSom(totalPrice)} (Humo •••• {selectedCard?.last4 || '4421'})
         </span>
+      </div>
+
+      {/* Platforma komissiyasi (narx ichida) */}
+      <div className="px-2.5 py-2 bg-slate-50 rounded-xl border border-slate-200/60 text-xs space-y-1">
+        <div className="flex items-center justify-between">
+          <span className="text-slate-500">Platforma komissiyasi ({commissionPercent}%):</span>
+          <span className="font-mono text-slate-800">{formatSom(splitPayment(totalPrice, commissionRate).commission)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-slate-500">Parking egasiga:</span>
+          <span className="font-mono text-slate-800">{formatSom(splitPayment(totalPrice, commissionRate).ownerPayout)}</span>
+        </div>
       </div>
 
       {/* Exact Prompt: Large QR Code with center parking shield */}

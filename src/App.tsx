@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
-import { TASHKENT_PARKING_ZONES, STATUS_CONFIG } from './data/parkingData';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { TASHKENT_PARKING_ZONES, STATUS_CONFIG, buildOwnerZone } from './data/parkingData';
 import { INITIAL_SAVED_CARDS } from './data/savedCards';
-import { ParkingZone, ParkingSpot, ActiveSession, MainTabType, ParkingStatus, SavedCard } from './types';
+import { ParkingZone, ParkingSpot, ActiveSession, MainTabType, ParkingStatus, SavedCard, UserLocation, LocationSource } from './types';
+import { Place, nearestDistrict } from './data/places';
+import { TASHKENT_CENTER, haversineMeters, formatDistance, isInsideTashkent } from './utils/geo';
 import { MobileTopSearchBar } from './components/mobile/MobileTopSearchBar';
 import { MobileMapLegend } from './components/mobile/MobileMapLegend';
 import { MobileBottomSheetCard } from './components/mobile/MobileBottomSheetCard';
@@ -17,16 +19,83 @@ import { ReceiptModal } from './components/app/ReceiptModal';
 import { DesignSystemView } from './components/design-system/DesignSystemView';
 import { OperatorDashboard } from './components/desktop/OperatorDashboard';
 import { AdminDashboard } from './components/desktop/AdminDashboard';
-import { Smartphone, Monitor, Palette, CheckCircle2, ArrowLeft, LayoutDashboard, Shield } from 'lucide-react';
+import { LoginScreen } from './components/auth/LoginScreen';
+import { AuthSession, MainView, UserRole, ROLE_LABEL, ROLE_VIEWS, ROLE_DEFAULT_VIEW, loadSession, saveSession, switchRole, addRole, refreshSession } from './data/auth';
+import { useApplications } from './utils/applicationsStore';
+import { Smartphone, Monitor, Palette, CheckCircle2, ArrowLeft, LayoutDashboard, Shield, LogOut } from 'lucide-react';
 
 export default function App() {
-  const [zones] = useState<ParkingZone[]>(TASHKENT_PARKING_ZONES);
-  
-  // Default selected parking is Parking #1 ("Parking #1 — 1.2 km", "Bo'sh joy: 14 / 50", "Narx: 5 000 so'm/soat")
-  const [selectedZone, setSelectedZone] = useState<ParkingZone>(TASHKENT_PARKING_ZONES[0]);
+  // Namunaviy parkinglar + faollashtirilgan (sensorlari o'rnatilgan) egalar parkinglari
+  const [baseZones] = useState<ParkingZone[]>(TASHKENT_PARKING_ZONES);
+  const applications = useApplications();
+  const allZones = useMemo<ParkingZone[]>(
+    () => [
+      ...baseZones,
+      ...applications.filter((a) => a.status === 'active').map((a, i) => buildOwnerZone(a, i)),
+    ],
+    [baseZones, applications]
+  );
+
+  // Foydalanuvchining joriy joylashuvi (GPS -> xaritadan tanlash -> qidiruv)
+  const [userLoc, setUserLoc] = useState<UserLocation>({
+    lat: TASHKENT_CENTER.lat,
+    lng: TASHKENT_CENTER.lng,
+    source: 'loading',
+    label: 'Aniqlanmoqda…',
+  });
+  const [isPickingLocation, setIsPickingLocation] = useState(false);
+
+  // Barcha parkinglar: masofa foydalanuvchi joylashuvidan (havo chizig'ida) hisoblanadi
+  const zones = useMemo<ParkingZone[]>(
+    () =>
+      allZones.map((z) => {
+        const meters = haversineMeters(userLoc, z);
+        return { ...z, distanceMeters: Math.round(meters), distance: formatDistance(meters) };
+      }),
+    [allZones, userLoc.lat, userLoc.lng]
+  );
+
+  // Tanlangan parking (id bo'yicha saqlanadi, masofa doim yangi bo'ladi)
+  const [selectedZoneId, setSelectedZoneId] = useState<string>(TASHKENT_PARKING_ZONES[0].id);
+  const selectedZone: ParkingZone = zones.find((z) => z.id === selectedZoneId) ?? zones[0];
   
   // Main View Mode: 'admin' (Smart Parking Admin), 'dashboard' (Central Parking Operator), 'mobile', 'design-system'
-  const [currentMainView, setCurrentMainView] = useState<'admin' | 'dashboard' | 'mobile' | 'design-system'>('admin');
+  // Kirgan foydalanuvchi (rol) — har bir rol faqat o'ziga ruxsat etilgan oynalarni ko'radi
+  const [session, setSession] = useState<AuthSession | null>(() => loadSession());
+  const [currentMainView, setCurrentMainViewRaw] = useState<MainView>(() => {
+    const s = loadSession();
+    return s ? ROLE_DEFAULT_VIEW[s.role] : 'admin';
+  });
+  const allowedViews: MainView[] = session ? ROLE_VIEWS[session.role] : [];
+  // Ruxsat etilmagan oynaga o'tishga urinish e'tiborga olinmaydi
+  const setCurrentMainView = (v: MainView) => {
+    if (allowedViews.includes(v)) setCurrentMainViewRaw(v);
+  };
+  const handleLogin = (s: AuthSession) => {
+    saveSession(s);
+    setSession(s);
+    setCurrentMainViewRaw(ROLE_DEFAULT_VIEW[s.role]);
+  };
+  // Bitta akkaunt, bir nechta rol: faol rolni almashtirish
+  const handleSwitchRole = (role: UserRole) => {
+    if (!session) return;
+    const next = switchRole(session, role);
+    setSession(next);
+    setCurrentMainViewRaw(ROLE_DEFAULT_VIEW[next.role]);
+  };
+  // Haydovchi parking egasi roliga ega bo'ladi (arizani keyin dashboardda to'ldiradi)
+  const handleBecomeOwner = () => {
+    if (!session) return;
+    addRole(session.login, 'owner');
+    const next = refreshSession(session, 'owner');
+    setSession(next);
+    setCurrentMainViewRaw(ROLE_DEFAULT_VIEW.owner);
+  };
+  const handleLogout = () => {
+    saveSession(null);
+    setSession(null);
+    setActiveTab('map');
+  };
 
   // 4 Main Mobile Tabs: Xarita, Band qilish, Tarix, Profil
   const [activeTab, setActiveTab] = useState<MainTabType>('map');
@@ -71,17 +140,80 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // Handle Search Destination selection
-  const handleSelectDestination = (dest: { name: string; x: number; y: number }) => {
-    setSearchQuery(dest.name);
-    // Find closest parking
-    const closest = zones.find((z) =>
-      dest.name.toLowerCase().includes(z.name.toLowerCase()) ||
-      z.name.toLowerCase().includes(dest.name.toLowerCase())
-    ) || zones[0];
-    setSelectedZone(closest);
-    setIsNavigating(true);
-    showToast(`Tanlandi: ${dest.name}`);
+  // Foydalanuvchiga eng yaqin (imkon bo'lsa bo'sh joyi bor) parkingni topish
+  const nearestZoneId = (p: { lat: number; lng: number }) => {
+    const withFree = allZones.filter((z) => z.occupiedSpots < z.totalSpots);
+    const pool = withFree.length > 0 ? withFree : allZones;
+    return pool.reduce((best, z) => (haversineMeters(p, z) < haversineMeters(p, best) ? z : best), pool[0]).id;
+  };
+
+  const applyLocation = (lat: number, lng: number, source: LocationSource, label: string, selectNearest = true) => {
+    setUserLoc({ lat, lng, source, label });
+    if (selectNearest) setSelectedZoneId(nearestZoneId({ lat, lng }));
+    setIsNavigating(false);
+  };
+
+  const applyDefaultLocation = (label: string) =>
+    applyLocation(TASHKENT_CENTER.lat, TASHKENT_CENTER.lng, 'default', label);
+
+  // 1) GPS orqali joylashuvni aniqlash
+  const locateByGps = useCallback((announce: boolean) => {
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      applyDefaultLocation('Toshkent markazi (taxminiy)');
+      showToast("Brauzer GPS'ni qo'llamaydi. Joyni xaritadan yoki qidiruvdan tanlang");
+      return;
+    }
+    setUserLoc((prev) => ({ ...prev, source: 'loading', label: 'Aniqlanmoqda…' }));
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const p = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        if (!isInsideTashkent(p)) {
+          applyDefaultLocation('Toshkent markazi (GPS Toshkentdan tashqarida)');
+          showToast('GPS joylashuvingiz Toshkentdan tashqarida. Joyni xaritadan yoki qidiruvdan tanlang');
+          return;
+        }
+        applyLocation(p.lat, p.lng, 'gps', `${nearestDistrict(p).name} yaqinida`);
+        setMapCenterTrigger(Date.now());
+        if (announce) showToast('Joylashuvingiz aniqlandi');
+      },
+      (err) => {
+        applyDefaultLocation('Toshkent markazi (taxminiy)');
+        showToast(
+          err.code === 1
+            ? "GPS ruxsati berilmadi. Joyni xaritadan yoki qidiruvdan tanlang"
+            : "Joylashuvni aniqlab bo'lmadi. Joyni xaritadan yoki qidiruvdan tanlang"
+        );
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allZones]);
+
+  // Ilova ochilganda joylashuvni avtomatik aniqlash
+  useEffect(() => {
+    if (session) locateByGps(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.login]);
+
+  // 2) Xaritadan tanlash (xaritaga bosish yoki markerni sudrab olib borish)
+  const handlePickLocation = (lat: number, lng: number) => {
+    applyLocation(lat, lng, 'manual', `Xaritadan tanlangan joy (${nearestDistrict({ lat, lng }).name})`);
+    setIsPickingLocation(false);
+    showToast('Joylashuvingiz yangilandi');
+  };
+
+  // 3) Qidiruv orqali (tuman yoki mashhur joy) joylashuvni belgilash
+  const handleSelectPlace = (place: Place) => {
+    applyLocation(place.lat, place.lng, 'manual', place.name);
+    setMapCenterTrigger(Date.now());
+    showToast(`Joylashuv: ${place.name}`);
+  };
+
+  // Qidiruvdan parking tanlash (barcha tumanlar bo'yicha)
+  const handleSelectZoneFromSearch = (zone: ParkingZone) => {
+    setSelectedZoneId(zone.id);
+    setIsNavigating(false);
+    showToast(`Tanlandi: ${zone.displayName} · ${zone.name}`);
   };
 
   // Handle Navigation Trigger
@@ -138,11 +270,13 @@ export default function App() {
             <MobileTopSearchBar
               value={searchQuery}
               onChange={setSearchQuery}
-              onSelectDestination={handleSelectDestination}
-              onCurrentLocationClick={() => {
-                setMapCenterTrigger(Date.now());
-                showToast("Sizning joylashuvingiz markazga olindi");
-              }}
+              zones={zones}
+              userLocation={userLoc}
+              onSelectZone={handleSelectZoneFromSearch}
+              onSelectPlace={handleSelectPlace}
+              onCurrentLocationClick={() => locateByGps(true)}
+              onPickOnMap={() => setIsPickingLocation(true)}
+              isPickingLocation={isPickingLocation}
             />
           </div>
 
@@ -151,12 +285,16 @@ export default function App() {
             zones={zones}
             selectedZone={selectedZone}
             onSelectZone={(z) => {
-              setSelectedZone(z);
+              setSelectedZoneId(z.id);
               setIsNavigating(false);
             }}
             isNavigating={isNavigating}
             filterStatus={statusFilter}
             mapCenterTrigger={mapCenterTrigger}
+            userLocation={userLoc}
+            isPickingLocation={isPickingLocation}
+            onPickLocation={handlePickLocation}
+            onCancelPick={() => setIsPickingLocation(false)}
           />
 
           {/* Floating Map Legend (🟢 Bo'sh parking, 🟡 Deyarli to'la, 🔴 Bo'sh joy yo'q) */}
@@ -230,6 +368,15 @@ export default function App() {
     </div>
   );
 
+  if (!session) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
+  // Joriy oyna ruxsat etilmagan bo'lsa (masalan sessiya o'zgargan), rolning asosiy oynasiga qaytariladi
+  const activeView: MainView = allowedViews.includes(currentMainView)
+    ? currentMainView
+    : ROLE_DEFAULT_VIEW[session.role];
+
   return (
     <div className="min-h-screen bg-slate-900 text-slate-900 font-sans flex flex-col justify-between">
       {/* Top Application Mode Switcher Bar */}
@@ -247,59 +394,67 @@ export default function App() {
         </div>
 
         {/* 4 Main View Tabs: Admin Dashboard, Operator Dashboard, Mobile App, Design System */}
-        <div className="flex items-center gap-1.5 p-1 bg-slate-900 rounded-xl border border-slate-800 overflow-x-auto">
-          <button
-            onClick={() => setCurrentMainView('admin')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap ${
-              currentMainView === 'admin'
-                ? 'bg-[#2563EB] text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Shield className="w-3.5 h-3.5" />
-            <span>Smart Parking Admin</span>
-          </button>
+        <div className={`${allowedViews.length > 1 ? "flex" : "hidden"} items-center gap-1.5 p-1 bg-slate-900 rounded-xl border border-slate-800 overflow-x-auto`}>
+          {allowedViews.includes('admin') && allowedViews.length > 1 && (
+            <button
+              onClick={() => setCurrentMainView('admin')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap ${
+                activeView === 'admin'
+                  ? 'bg-[#2563EB] text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>Smart Parking Admin</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setCurrentMainView('dashboard')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap ${
-              currentMainView === 'dashboard'
-                ? 'bg-[#2563EB] text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <LayoutDashboard className="w-3.5 h-3.5" />
-            <span>Central Parking (Dispetcher)</span>
-          </button>
+          {allowedViews.includes('dashboard') && allowedViews.length > 1 && (
+            <button
+              onClick={() => setCurrentMainView('dashboard')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap ${
+                activeView === 'dashboard'
+                  ? 'bg-[#2563EB] text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <LayoutDashboard className="w-3.5 h-3.5" />
+              <span>Central Parking (Dispetcher)</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setCurrentMainView('mobile')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap ${
-              currentMainView === 'mobile'
-                ? 'bg-[#2563EB] text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Smartphone className="w-3.5 h-3.5" />
-            <span>Mobil Ilova (Haydovchi)</span>
-          </button>
+          {allowedViews.includes('mobile') && allowedViews.length > 1 && (
+            <button
+              onClick={() => setCurrentMainView('mobile')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap ${
+                activeView === 'mobile'
+                  ? 'bg-[#2563EB] text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>Mobil Ilova (Haydovchi)</span>
+            </button>
+          )}
 
-          <button
-            onClick={() => setCurrentMainView('design-system')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap ${
-              currentMainView === 'design-system'
-                ? 'bg-[#2563EB] text-white shadow-sm'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Palette className="w-3.5 h-3.5" />
-            <span>Dizayn Tizimi</span>
-          </button>
+          {allowedViews.includes('design-system') && allowedViews.length > 1 && (
+            <button
+              onClick={() => setCurrentMainView('design-system')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap ${
+                activeView === 'design-system'
+                  ? 'bg-[#2563EB] text-white shadow-sm'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Palette className="w-3.5 h-3.5" />
+              <span>Dizayn Tizimi</span>
+            </button>
+          )}
         </div>
 
         {/* Contextual actions */}
         <div className="flex items-center gap-2">
-          {currentMainView === 'mobile' && (
+          {activeView === 'mobile' && (
             <button
               onClick={() => setIsPhoneFrame(!isPhoneFrame)}
               className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
@@ -323,11 +478,51 @@ export default function App() {
             <span className="w-2 h-2 rounded-full bg-[#16A34A]" />
             <span>Toshkent · Jonli</span>
           </div>
+
+          <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
+            {session.roles.filter((r) => r !== 'admin').length > 1 && (
+              <div className="flex p-0.5 bg-slate-800 rounded-lg">
+                {session.roles
+                  .filter((r) => r !== 'admin')
+                  .map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => handleSwitchRole(r)}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors ${
+                        session.role === r ? 'bg-[#2563EB] text-white' : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {ROLE_LABEL[r]}
+                    </button>
+                  ))}
+              </div>
+            )}
+            {session.role === 'driver' && !session.roles.includes('owner') && (
+              <button
+                onClick={handleBecomeOwner}
+                className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-bold transition-colors"
+              >
+                Parking egasi bo'lish
+              </button>
+            )}
+            <div className="text-right leading-tight hidden sm:block">
+              <div className="text-[11px] font-bold text-white">{session.displayName}</div>
+              <div className="text-[10px] text-slate-400">{ROLE_LABEL[session.role]}</div>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white transition-colors"
+              title="Chiqish"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Chiqish</span>
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Main Viewport Content Area */}
-      {currentMainView === 'admin' ? (
+      {activeView === 'admin' ? (
         /* View 0: Desktop Admin Dashboard "Smart Parking Admin" */
         <div className="flex-1 w-full bg-[#F8FAFC]">
           <AdminDashboard
@@ -336,7 +531,7 @@ export default function App() {
             onOpenDesignSystem={() => setCurrentMainView('design-system')}
           />
         </div>
-      ) : currentMainView === 'dashboard' ? (
+      ) : activeView === 'dashboard' ? (
         /* View 1: Desktop Operator Dashboard for "Central Parking" */
         <div className="flex-1 w-full bg-[#F8FAFC]">
           <OperatorDashboard
@@ -344,7 +539,7 @@ export default function App() {
             onOpenDesignSystem={() => setCurrentMainView('design-system')}
           />
         </div>
-      ) : currentMainView === 'design-system' ? (
+      ) : activeView === 'design-system' ? (
         /* View 2: Full Design System Documentation & Workbench */
         <div className="flex-1 w-full bg-[#F8FAFC] p-4 sm:p-8 overflow-y-auto">
           <div className="max-w-6xl mx-auto space-y-4">

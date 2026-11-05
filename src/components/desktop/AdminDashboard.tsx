@@ -1,3 +1,4 @@
+import { COMMISSION_PERCENT, splitPayment, formatSom } from '../../utils/commission';
 import React, { useState } from 'react';
 import {
   LayoutDashboard,
@@ -24,6 +25,8 @@ import {
   Zap,
 } from 'lucide-react';
 import { StatusBadge } from '../app/StatusBadge';
+import { PlatformRevenuePanel } from './PlatformRevenuePanel';
+import { OwnerApplicationsPanel } from './OwnerApplicationsPanel';
 import { ParkingStatus } from '../../types';
 
 interface OfflineSensor {
@@ -494,9 +497,18 @@ export const AdminDashboard: React.FC<{
                 <span className="text-[11px] text-slate-400 font-medium block mt-1">
                   Shahar g'aznasiga tushum
                 </span>
+                <span className="text-[11px] text-emerald-600 font-semibold block mt-1">
+                  Platforma komissiyasi ({COMMISSION_PERCENT}%): {formatSom(splitPayment(248_500_000).commission)}
+                </span>
               </div>
             </div>
           </section>
+
+          {/* Platforma foydasi (komissiya) */}
+          <PlatformRevenuePanel />
+
+          {/* Parking egalari arizalari */}
+          <OwnerApplicationsPanel />
 
           {/* Operational Area: 2 Columns Split */}
           <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

@@ -1,3 +1,5 @@
+import { addBooking } from '../../utils/bookingsStore';
+import { COMMISSION_PERCENT, splitPayment, formatSom } from '../../utils/commission';
 import React, { useState } from 'react';
 import { ParkingZone, ParkingSpot, ActiveSession } from '../../types';
 import { UzbekPlate } from './UzbekPlate';
@@ -57,6 +59,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
         totalPaid: totalPrice,
         status: 'active',
       };
+      addBooking(zone.name, totalPrice);
       setIsProcessing(false);
       onSuccess(newSession);
     }, 700);
@@ -218,6 +221,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             <div className="flex items-center justify-between text-xs text-slate-500">
               <span>Shahar ekologik xizmat to'lovi:</span>
               <span className="font-mono text-[#16A34A] font-medium">0 so'm (Bepul)</span>
+            </div>
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span>Shundan platforma komissiyasi ({COMMISSION_PERCENT}%):</span>
+              <span className="font-mono tabular-nums">{formatSom(splitPayment(totalPrice).commission)}</span>
             </div>
             <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
               <span className="text-xs font-bold text-slate-900">Jami to'lov:</span>
